@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import PIL
-
+import os
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
@@ -183,12 +183,12 @@ class DecoderRNN(nn.Module):
             len_out = Nmax+1
         else:
             len_out = 1
-        pi = F.softmax(pi.t().squeeze()).view(len_out,-1,hp.M)
-        sigma_x = torch.exp(sigma_x.t().squeeze()).view(len_out,-1,hp.M)
-        sigma_y = torch.exp(sigma_y.t().squeeze()).view(len_out,-1,hp.M)
-        rho_xy = torch.tanh(rho_xy.t().squeeze()).view(len_out,-1,hp.M)
-        mu_x = mu_x.t().squeeze().contiguous().view(len_out,-1,hp.M)
-        mu_y = mu_y.t().squeeze().contiguous().view(len_out,-1,hp.M)
+        pi = F.softmax(pi.squeeze(2).t()).view(len_out,-1,hp.M)
+        sigma_x = torch.exp(sigma_x.squeeze(2).t()).view(len_out,-1,hp.M)
+        sigma_y = torch.exp(sigma_y.squeeze(2).t()).view(len_out,-1,hp.M)
+        rho_xy = torch.tanh(rho_xy.squeeze(2).t()).view(len_out,-1,hp.M)
+        mu_x = mu_x.squeeze(2).t().contiguous().view(len_out,-1,hp.M)
+        mu_y = mu_y.squeeze(2).t().contiguous().view(len_out,-1,hp.M)
         q = F.softmax(params_pen).view(len_out,-1,3)
         return pi,mu_x,mu_y,sigma_x,sigma_y,rho_xy,q,hidden,cell
 
@@ -269,11 +269,12 @@ class Model():
         self.encoder_optimizer.step()
         self.decoder_optimizer.step()
         # some print and save:
-        if epoch%1==0:
-            print('epoch',epoch,'loss',loss.data[0],'LR',LR.data[0],'LKL',LKL.data[0])
+
+        if epoch % 50==0:
+            print('epoch: {}  loss: {:.3g}  LR: {:.3g}  LKL: {:.3g}'.format(epoch, loss.item(), LR.item(), LKL.item()))
             self.encoder_optimizer = lr_decay(self.encoder_optimizer)
             self.decoder_optimizer = lr_decay(self.decoder_optimizer)
-        if epoch%100==0:
+        if epoch % 200==0:
             #self.save(epoch)
             self.conditional_generation(epoch)
 
@@ -396,10 +397,14 @@ def sample_bivariate_normal(mu_x,mu_y,sigma_x,sigma_y,rho_xy, greedy=False):
     sigma_y *= np.sqrt(hp.temperature)
     cov = [[sigma_x * sigma_x, rho_xy * sigma_x * sigma_y],\
         [rho_xy * sigma_x * sigma_y, sigma_y * sigma_y]]
+    mean = [x.to('cpu') for x in mean]
+    cov[0] = [x.to('cpu') for x in cov[0]]
+    cov[1] = [x.to('cpu') for x in cov[1]]
+
     x = np.random.multivariate_normal(mean, cov, 1)
     return x[0][0], x[0][1]
 
-def make_image(sequence, epoch, name='_output_'):
+def make_image(sequence, epoch, folder="output", name='_output_'):
     """plot drawing with separated strokes"""
     strokes = np.split(sequence, np.where(sequence[:,2]>0)[0]+1)
     fig = plt.figure()
@@ -411,7 +416,9 @@ def make_image(sequence, epoch, name='_output_'):
     pil_image = PIL.Image.frombytes('RGB', canvas.get_width_height(),
                  canvas.tostring_rgb())
     name = str(epoch)+name+'.jpg'
-    pil_image.save(name,"JPEG")
+    if not os.path.exists(folder):
+        os.mkdir(folder)
+    pil_image.save(os.path.join(folder, name),"JPEG")
     plt.close("all")
 
 if __name__=="__main__":
